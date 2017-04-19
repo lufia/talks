@@ -1,0 +1,77 @@
+色々なインターフェイス
+
+- Fenrirアプリ部
+- BoltzEngineやってます
+
+* REST
+
+- Representational State Transfer
+- HTPメソッドで特定のリソースを操作する
+
+* Push API
+
+- モバイルアプリへ通知を行うAPI
+- デバイスへメッセージを配信する
+
+** デバイストークン
+
+GET /devices
+	登録されたデバイスリストを取得
+
+POST /devices
+
+	デバイストークンをサーバに登録する
+	リクエストはtoken
+	レスポンスにはID
+
+PUT /devices/:id
+
+	トークンの更新を行う
+	リクエストはtoken
+	レスポンスにはID
+
+DELETE /devices/:id
+
+	削除
+
+** メッセージ
+
+POST /messages
+
+	bodyにデバイストークンのリストとメッセージテキストを入れる
+	IDを返す
+
+GET /messages/:id
+
+	配信状況を取得する
+
+* 2
+
+** デバイス
+
+POST /devices
+
+	LocationヘッダでURLを返す
+
+PUT (POSTの時のURL)
+
+	略
+
+** メッセージ
+
+POST (deviceごとのURL)
+
+	bodyにメッセージ本文
+
+* RESTは難しい
+
+- いろいろな表現方法があるよ
+- ページングはQueryパラメータ？Linkヘッダ？
+- ドキュメントはどこにあるの？
+- エラー時の挙動はどうなの？(RFCxxxができたけど)
+
+* gRPC
+
+* GraphQL
+
+* FUSE(おまけ)
