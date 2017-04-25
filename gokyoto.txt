@@ -1,77 +1,215 @@
-色々なインターフェイス
+REST is not only (Web) API Interface
 
 - Fenrirアプリ部
+- だいぶ前に某プロジェクトでPushを高速化した話をした
 - BoltzEngineやってます
+
+* 何を話すか
+
+- 別に会社の宣伝に来たわけじゃないので...
+- 大体はREST APIが適切だけれども、そうじゃない選択肢もあるよ
+
+* なぜこんな話をするか
+
+プッシュは、雑に言うとデバイストークンとメッセージをセットにして、
+各プラットフォームへ送ると端末へ届くというもの。
+表示テキストの他に、任意の拡張データも持たせることができる。
+
+BoltzEngineを作る以前は、DBも含めて設計していた。
+けれども、アプリごとに必要なメッセージが異なる場合が多くて
+思ったより使い回しができなかった。
+(DB設計もそうだし、APIインターフェイスもいけてない)
+
+汎用的なサービス(マイクロサービス)にするにはどう設計すればいいか。
 
 * REST
 
+当然、最初はRESTで考えますよね。
+
 - Representational State Transfer
 - HTPメソッドで特定のリソースを操作する
+- このように作るといいよ的なガイドラインとか習慣(?)
 
 * Push API
 
-- モバイルアプリへ通知を行うAPI
+通知を行うために最低限必要なAPI
+
+- デバイストークンを登録する
 - デバイスへメッセージを配信する
 
-** デバイストークン
+** デバイス登録API
 
-GET /devices
-	登録されたデバイスリストを取得
+Androidでは、デバイストークンが変わる場合があるので、
+今後ずっと変わらない値を使うようにする。
 
 POST /devices
+Content-Type: application/json
 
-	デバイストークンをサーバに登録する
-	リクエストはtoken
-	レスポンスにはID
+{
+	"token": "(トークン文字列),
+	"platform": "(iOS or Android)"
+}
 
-PUT /devices/:id
+HTTP/1.1 302 Found 
+Location: https://example.com/devices/:device_id
 
-	トークンの更新を行う
-	リクエストはtoken
-	レスポンスにはID
+通知を無効化する場合は、LocationのURLを使って行うようにします。
 
-DELETE /devices/:id
+DELETE /devices/:device_id
+Host: example.com
 
-	削除
+** メッセージAPI
 
-** メッセージ
+デバイスにメッセージを配信する場合は、デバイスURLにPOSTするとしましょう。
+
+POST /devices/:device_id
+Host: example.com
+Content-Type: application/json
+
+{
+	"message": "hellow, world"
+}
+
+* え
+
+- 当時はHTTP/2とかなかったので...
+- 1,000端末に通知を投げる場合、1,000回リクエストするの？
+
+* メッセージAPI v2
 
 POST /messages
+Content-Type: application/json
 
-	bodyにデバイストークンのリストとメッセージテキストを入れる
-	IDを返す
+[
+	{"message": "hello, world", "device_id": "xxxx"},
+	{"message": "hello, world", "device_id": "aaaa"},
+	{"message": "hello, world", "device_id": "bbbb"}
+]
 
-GET /messages/:id
+または、もっと省略して
 
-	配信状況を取得する
+{
+	"message": "hello, world",
+	"device_ids": ["xxxx", "aaaa", "bbbb"]
+}
 
-* 2
+* ドキュメント(時間があれば話す)
 
-** デバイス
+- エラーの場合(RFCxxx)
+- go-swagger
+- goa
 
-POST /devices
+* RESTじゃなくてもいいんじゃね
 
-	LocationヘッダでURLを返す
+これがRESTと呼べるものかはわからないけれど、
+そこまでHTTP APIこだわる必要はないと思った
 
-PUT (POSTの時のURL)
+* Goにおける他の選択肢
 
-	略
+- net/rpc
 
-** メッセージ
+Go標準パッケージの一部
+gobというGo独自のserialization
+決まった形のメソッドを用意して外部から呼び出せるようにする
 
-POST (deviceごとのURL)
+	type PushService struct{}
 
-	bodyにメッセージ本文
+	type SendRequest struct {
+		Message string
+		DeviceIDs []string
+	}
 
-* RESTは難しい
+	type SendResponse struct {
+	}
 
-- いろいろな表現方法があるよ
-- ページングはQueryパラメータ？Linkヘッダ？
-- ドキュメントはどこにあるの？
-- エラー時の挙動はどうなの？(RFCxxxができたけど)
+	func (*PushService) Send(req *SendRequest, resp *SendResponse) error {
+	}
 
-* gRPC
+- net/rpcの問題は
+- 通常は、Goプログラムからしか呼び出せない。
+  (もしかしたら移植されているかもしれないが...)
+- Go 1.8でfreezeになった(?)
+
+freeze=致命的な問題がなければ積極的なアップデートはしない
+
+* 余談
+
+- log/syslog
+- net/rpc
+- gin
+
+がほぼ同時に止まって割と辛い思いをしている..
+
+* gRPC replace net/rpc
+
+- Googleが
+- HTTP/2の上でProtocol Buffer 3を使っている
+- protocとprotoc-gen-goが必要
+	- nix-env -i protobuf
+	- go get github.com/golang/protobuf/protoc-gen-go
+
+まずはprotoファイルを書く。
+
+	syntax = "proto3";
+	service PushService {
+		// Send はSendRequestがあらわす複数のデバイスへ通知を行う。
+		rpc Send (SendRequest) returns (SendResponse);
+	}
+	message SendRequest {
+		// 通知するメッセージ
+		string message = 1;
+		// デバイスIDのリスト
+		repeated string deviceIds = 2;
+	}
+	message SendResponse {
+	}
+
+protocでGoのコードを生成する。
+
+	protoc --go_out=plugins=grpc:. (protoファイル名)
+
+これで*.pb.goが生成されるので、生成されたパッケージをimportして実装しましょう。
+
+	TODO: サーバ側の実装コード
+
+gRPCは、ある程度の言語をサポートしているので、クライアントの実装も簡単です。
+
+	TODO: GoとPythonのコード
+
+RESTの実装と、行なっていることは同じですが、
+
+- protoファイルからモデルを生成できる
+- protoファイルはサーバ側とクライアント側で共有できる
+- ドキュメントがなくてもある程度何ができるのかわかる
+- APIのデザインが、素直な表現になる
+	- URLじゃなくてメソッド名になる
+	- エラーの場合はerrorをreturnすればいいだけ
+	- ステータスコードとかいらない
+
+* gRPCは4つの形態がある
+
+- 1 : 1
+- 1 : N
+- N : 1
+- N : N
+
+それぞれの実装はFenrir DevBlogに書いたので読んでみてください。
 
 * GraphQL
+
+次、話は少し変わって、最近少し注目しているGraphQLです。
+TODO: GraphQLの定義を書く
+
+昨年のアドベントカレンダーで、GitHubとGitLabのクライアントを作ったんです。
+GitHubのIssueをファイルツリーとしてマウントするツールだったんですが、
+GitHubとGitLabのAPIって、Issueの親コメントはIssue APIでまるっと取れる、
+だけど、他のコメントはIssueComment APIに分かれていて、Issueひとつごとに
+コメントを読む方法しかできない(?)んですね。
+
+TODO: 図を書く
+
+なので例えば、`grep github.com/talks@lufia#*/*`とすると、
+ファイルの裏では普通にAPIを叩いているので、
+github.com/lufia/talksにあるIssueの数だけリクエストが投げられてしまう。
 
 * FUSE(おまけ)
