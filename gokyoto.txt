@@ -203,13 +203,70 @@ TODO: GraphQLの定義を書く
 昨年のアドベントカレンダーで、GitHubとGitLabのクライアントを作ったんです。
 GitHubのIssueをファイルツリーとしてマウントするツールだったんですが、
 GitHubとGitLabのAPIって、Issueの親コメントはIssue APIでまるっと取れる、
-だけど、他のコメントはIssueComment APIに分かれていて、Issueひとつごとに
-コメントを読む方法しかできない(?)んですね。
+だけど、他のコメントはIssueComment APIに分かれていて、
+Issueひとつごとにコメントを読むか、
+リポジトリに含まれる全てのコメントをフラットに取得するしかできないんですね。
 
 TODO: 図を書く
 
-なので例えば、`grep github.com/talks@lufia#*/*`とすると、
+なので例えば、`grep -i rpc github.com/talks@lufia#*/*`とすると、
 ファイルの裏では普通にAPIを叩いているので、
 github.com/lufia/talksにあるIssueの数だけリクエストが投げられてしまう。
+サーバ負荷は金で解決できるかもしれないが、少なくともクライアントコードは面倒。
+
+GraphQLは、1回または数回のリクエストで、必要なデータを取得できます。
+これはリポジトリに含まれるIssueとCommentを全て引き出すクエリ。
+
+	{
+		repository {
+			owner {
+				login
+			}
+			organization
+			issues {
+				title
+				body
+				html_url
+				created_at
+				updated_at
+				comments {
+					body
+					created_at
+					updated_at
+				}
+			}
+		}
+	}
+
+これを架空のサービス、https://example.com/graphqlにPOSTすると、
+クエリのキーに対応した値がJSONとして返ってきます。
+
+	{
+		"owner": {
+			"login": "lufia"
+		},
+		"organization": null,
+		"issues": [
+			{
+				"title": "add Plan 9 support",
+				"body": "I should support Plan 9.",
+				"html_url": "https://github.com/lufia/taskfs/issues/1",
+				"comments": [
+					{
+						"body": "xxxxxx",
+						"created_at": "2016-12-11T23:14:00+09:00",
+						"updated_at": "2016-12-11T23:14:00+09:00"
+					}
+				],
+				"created_at": "2016-12-11T23:13:00+09:00",
+				"updated_at": "2016-12-11T23:13:00+09:00"
+			},
+			{
+				...
+			}
+		]
+	}
+
+階層を維持したまま必要な値を取得できて、これはとても便利だなと思いました。
 
 * FUSE(おまけ)
