@@ -269,4 +269,109 @@ GraphQLは、1回または数回のリクエストで、必要なデータを取
 
 階層を維持したまま必要な値を取得できて、これはとても便利だなと思いました。
 
+ということでGoでサービスを実装する方法ですが、
+まずはimportして、ルートになるオブジェクトを決めます。
+
+	import (
+		"github.com/graphql-go/graphql"
+	)
+	var QueryType = graphql.NewObject(graphql.ObjectConfig{
+		Name: "Query",
+		Fields: graphql.Fields{
+			"owner": &graphql.Field{},
+			"organization": &graphql.Field{},
+			"issues": graphql.Field{},
+		},
+	})
+
+graphql.Fieldの詳細な実装はあとで...
+で、HTTPリクエストが届いた時に、JSONを返せるようにします。
+
+	func main() {
+		schema, _ := graphql.NewSchema(graphql.SchemaConfig{
+			Query: QueryType,
+		})
+		http.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+			q, _ := ioutil.ReadAll(r.Body)
+			res := graphql.Do(graphql.Params{
+				Schema: schema,
+				RequestString: string(q),
+			})
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(res)
+		})
+		http.ListenAndServe(":8080", nil)
+	}
+
+これで、/graphqlへGraphQLのクエリをPOSTすると、
+QueryTypeの定義を使って必要なだけオブジェクトを組み立てて、
+結果をクライアントへ返すようになります。
+
+後回しにしていたgraphql.Fieldは、
+
+	"login": &graphql.Field{
+		Type: graphql.NewNonNull(graphql.ID),
+		Description: "ログインユーザ名",
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			if v, ok := p.Source.(*Owner); !ok {
+				return nil, nil
+			}
+			return v.Login, nil
+		},
+	}
+
+オブジェクトの場合は、graphql.NewObjectで作っておいて、それをTypeにセットします。
+
+	var Organization = graphql.NewObject(graphql.ObjectConfig{
+		...
+	})
+	"organization": &graphql.Field{
+		Type: Organization,
+		Description: "組織",
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			if v, ok := p.Source.(*Repository); !ok {
+				return nil, nil
+			}
+			return v.Organization, nil
+		},
+	}
+
+リストもできますし。
+
+	"issues": &graphql.Field{
+		Type: graphql.NewList(Issue),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			if v, ok := p.Source.(*Repository); !ok {
+				return []*Issue{}, nil
+			}
+			return v.Issues, nil
+		},
+	}
+
+クエリパラメータのようなものもできます。
+
+	"issues": &graphql.Field{
+		Type: graphql.NewList(Issue),
+		Args: graphql.FieldConfigArgument{
+			"limit": &graphql.ArgumentConfig{
+				Description: "配列の上限",
+				Type: graphql.Int,
+			},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			lim := 50
+			if n, ok := p.Args["limit"].(int); ok {
+				lim = n
+			}
+			if v, ok := p.Source.(*Repository); !ok {
+				return []*Issue{}, nil
+			}
+			return v.Issues, nil
+		},
+	}
+
+他にも、GETだけではなく、mutationといって値を変更するためのリクエストも扱えます。
+興味があれば色々調べてみてください。
+
 * FUSE(おまけ)
