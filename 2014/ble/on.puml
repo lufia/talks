@@ -1,0 +1,28 @@
+@startuml{on.png}
+
+title イメージ図
+
+participant アプリ as app
+participant CoreBluetooth as cb
+participant iOS as ios
+participant 機器 as dev
+
+activate dev
+
+activate app
+	app ->> cb : readValueForCharacteristic:
+deactivate app
+
+activate cb
+	cb ->> ios
+	activate ios
+		ios ->> dev
+		ios <<-- dev
+		cb <<-- ios
+	deactivate ios
+	app <<-- cb : peripheral:didUpdateValueForCharacteristic:error:
+deactivate cb
+
+deactivate dev
+
+@enduml

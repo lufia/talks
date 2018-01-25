@@ -1,0 +1,29 @@
+@startuml{off.png}
+
+title イメージ図
+
+participant アプリ as app
+participant CoreBluetooth as cb
+participant iOS as ios
+participant 機器 as dev
+
+activate dev
+
+activate app
+	app ->> cb : readValueForCharacteristic:
+deactivate app
+
+activate cb
+	cb ->> ios
+	activate ios
+		ios ->> dev
+		ios <<-- dev
+	deactivate ios
+deactivate cb
+
+app <<-- cb : centralManagerDidUpdateState:
+note left : 届かない代わりにBLEがOFFになったことが分かる
+
+deactivate dev
+
+@enduml

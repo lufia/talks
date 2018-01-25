@@ -1,0 +1,268 @@
+絶対にはまるCoreBluetooth
+
+門多
+2014/03/08
+9 at lufia.org
+
+* 自己紹介
+
+- 門多恭平
+- フェンリル社唯一のPlan 9使い
+- 共同開発部在籍
+- iOSアプリを開発してます(ちょっとだけGolangでサーバ書いたり)
+
+* おしながき
+
+CoreBluetoothのはまりどころ
+
+- CoreBluetoothとは
+- 全体的な落とし穴
+- iOS 5の罠
+- iOS 6固有の罠
+- iOS 7固有の罠
+
+* はじめに
+
+このスライドはFenrir Developer's Blogに+αした内容です
+じっくり読みたい方は ↓↓
+
+Google "CoreBluetooth 落とし穴"
+
+.image ble/blog.png
+
+* CoreBluetooth
+
+- Apple標準のBLEフレームワーク
+- iPhone 4S+iOS 5以上から利用可能
+- XPCでアプリとBLEプロセスのプロセス間通信を行う
+- 非同期処理はデリゲートを使用する(デリゲートパターン)
+
+* CoreBluetoothの基本
+
+- 任意のdispatch_queueを使わせるように初期化
+- 機器を探す
+- 機器と接続する
+- 必要な値の監視を依頼する
+- 値を読み書きする
+- 切断する
+
+* イメージ
+
+呼び出し側
+
+	[centralManager scanForPeripheralsWithServices:nil options:options];
+
+受け側
+
+	- (void)centralmanager:(CBCentralManager *)central
+	 didDiscoverPeripheral:(CBPeripheral *)peripheral
+	     advertisementData:(NSDictionary *)advertisementData
+	                  RSSI:(NSNumber *)RSSI
+	{
+		...
+	}
+
+* 図
+
+.image ble/proc.png
+
+詳細は連載第2回
+
+* 落とし穴
+
+何が難しいの？
+→基本はシンプルなのに罠がいっぱい
+
+* 全体的な罠
+
+- BLEがOFFの場合は応答が無い
+- メソッド呼び出しを間違うと応答が無い
+- タイムアウトが無い
+
+* BLEがOFFの場合
+
+デリゲートは全く応答しません。
+メソッド実行中にBLEをONに戻しても、絶対にデリゲートは呼ばれません。
+
+scanForPeripheralsWithServices:options:(機器の発見)であっても、
+OFFにしてから後は絶対にデリゲートは呼ばれません。
+
+* BLEがOFFの場合(正常な絵)
+
+.image ble/on.png
+
+* BLEがOFFの場合(OFFのとき)
+
+.image ble/off.png
+
+- 最初からOFFの場合は機器まで届かない
+- 途中でOFFにすると、OFFにした所で止まる
+- そのうちBLEリンクを維持できなくなりCBPeripheral.isConnectedがNOになる
+- OFFになった時、centralManagerDidUpdateState:でその時のBLE状態が渡される
+
+* 間違った使い方をすると応答がない
+
+たとえば以下のコード...
+
+	NSAssert(peripheral.isConnected == NO, @"接続していないはず");
+	[central cancelPeripheralConnection:peripheral];
+
+切断されている機器に対して切断しようしてもエラーになりません。
+ただし、centralManager:didDisconnectPeripheral:error:は呼ばれません。
+[API MISUSE]というログを出したっきり無応答です。
+
+* 安易な対策
+
+接続していることを確認するはずが...
+
+	if(peripheral.isConnected){
+		[central cancelPeripheralConnection:peripheral];
+	}
+
+* 現実
+
+結局、if判定からcancelPeripheralConnection:までに切れると状況は同じです。
+
+	if(peripheral.isConnected){
+		// if判定の後、ここで意図しない切断されると意味が無い
+		[central cancelPeripheralConnection:peripheral];
+	}
+
+didDisconnectPeripheralが実行されないと困る仕様は回避しましょう。
+それが難しいならタイムアウトさせましょう。
+
+* タイムアウトが無い
+
+CBCentralManager
+
+- scanForPeripheralsWithServices:
+- retrievePeripheralsWithIdentifiers:
+- connectPeripheral:options:
+- cancelPeripheralConnection:
+
+CBPeripheral
+
+- readValueForCharacteristic:
+- writeValue:forCharacteristic:type:
+- discoverServices:
+- discoverCharacteristics:forService:
+- setNotifyValue:forCharacteristic:
+
+* タイムアウトはありません
+
+自分でNSTimer等をまわしてタイムアウト判定しなければなりません。
+
+* iOS 5
+
+- ペアリングアラートがCoreBluetoothキューから呼ばれている
+- CBErrorドメインのエラーがすべてUnknown
+
+もういいでしょう。忘れましょう。
+
+* iOS 6固有の問題
+
+- queueがnilならパラレルで動く
+- 切断後も物理的に接続したまま維持される
+
+基本的にiOS 6.0が問題児ですが、iOS 6.1は優秀です
+
+* iOS 6.0(1)問題
+
+ドキュメントには、"queueにnilを渡すとmainキューで実行される"とあるが...
+
+	[[CBCentralManager alloc] initWithDelegate:self queue:nil];
+
+バグにより、didUpdateValueForCharacteristicが並列で実行される。
+
+.image ble/par.png
+
+* iOS 6.0(1)対策
+
+自分でキューを作成して渡しましょう。
+
+	queue = dispatch_queue_create("com.fenrir-inc.blesample");
+	central = [[CBCentralManager alloc] initWithDelegate:self queue:queue];
+
+iOS 6.1以上なら修正されています。
+
+* iOS 6.0(2)問題
+
+cancelPeripheralConnection:は成功する。
+
+	[central cancelPeripheralConnection:peripheral];
+
+アプリからは切れているようにしか見えないけど...
+
+	- (void)centralManager:(CBCentralManager *)central
+	didDisconnectPeripheral:(CBPeripheral *)peripheral
+	                 error:(NSError *)error
+	{
+		NSLog("isConnected = %@", peripheral.isConnected ? @"YES" : @"NO");
+		// NO
+	}
+
+BLEリンクは繋がったまま(ステータスバーにBLEアイコン点灯中)。
+
+* iOS 6.0(2)対策
+
+アプリ側は、通常通り接続可能のため、特に気にする必要はありません。
+ただし、機器側に、BLEリンクの状態によって挙動が変わるなら要注意です。
+
+iOS 6.1以上なら(r
+
+* iOS 7固有の問題
+
+- バックグラウンドが厳密になった
+- BLE仕様にも厳密になった
+- RSSIがおかしい
+
+* iOS 7(1)問題
+
+- iOS 6まではアプリをバックグラウンドにしても動いていたコード
+- iOS 7ではバックグラウンドに遷移したら動作しなくなる
+
+特に、通信中にバックグラウンドへ遷移された場合に顕著。
+応答は返ってこないし、切断しようと思ってもそもそも通信できない。
+
+* iOS 7(1)対策
+
+以前から、バックグラウンドでBLE通信を行いたい場合は
+以下を追加するよう指示がありますのでInfo.plistへ記述しましょう。
+
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
+
+.image ble/background.png
+
+* iOS 7(2)問題
+
+なんかよくわからないけどiOS 6で動いていたのにiOS 7では動かない。
+
+- 一部の命令が動作していない、など
+
+* iOS 7(2)アドバイス
+
+iOS 7以降、BLEは規格に厳密な実装に変更されているようです。
+規格を確認してみるとヒントが見つかるかもしれません。
+
+* iOS 7(3)問題
+
+- RSSIの値がおかしい
+
+まれに、RSSIの値が0以上になる場合がある。
+
+* iOS 7(3)対策
+
+- ありえない数字(たとえば-10以上)は無視しましょう
+
+原因は分かっていませんがiOSのバグじゃないでしょうか。
+120以上のRSSIもたまに取れますが、本当にその値だったら死ぬそうです。
+
+* まとめ
+
+- 通信が途中で切れることを考慮して設計しましょう
+- タイムアウトが必要なら自分で実装しましょう
+- うまくいかない場合はAppleのドキュメントやBLE規格を引きましょう
+- 転んでも泣かない

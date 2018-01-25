@@ -1,0 +1,32 @@
+@startuml{proc.png}
+
+title イメージ図
+
+participant アプリ as app
+participant CoreBluetooth as cb
+participant iOS as ios
+participant 機器 as dev
+
+activate dev
+
+activate app
+app -> cb : scanForPeripheralsWithServices:options:
+deactivate app
+
+activate cb
+cb ->> ios : 機器の検索
+
+activate ios
+cb <<-- ios : 機器を発見した
+app <<-- cb : centralManager:didDiscoverPeripheral:advertisementData:RSSI:
+cb <<-- ios : 機器を発見した
+app <<-- cb : centralManager:didDiscoverPeripheral:advertisementData:RSSI:
+cb <<-- ios : 機器を発見した
+app <<-- cb : centralManager:didDiscoverPeripheral:advertisementData:RSSI:
+deactivate ios
+
+deactivate cb
+
+deactivate dev
+
+@enduml
